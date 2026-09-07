@@ -30,6 +30,13 @@
     .crow-fast {
       animation: flapWing 0.2s infinite ease-in-out !important;
     }
+    @keyframes bombTick {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.15) rotate(5deg); }
+    }
+    .bomb-anim {
+      animation: bombTick 0.5s infinite ease-in-out;
+    }
     @keyframes floatUp {
       0% { opacity: 1; transform: translateY(0) scale(1); }
       100% { opacity: 0; transform: translateY(-30px) scale(1.2); }
@@ -37,6 +44,17 @@
     .hit-popup {
       animation: floatUp 0.5s ease-out forwards;
       pointer-events: none;
+    }
+    @keyframes shakeScreen {
+      0% { transform: translate(0, 0); }
+      20% { transform: translate(-4px, 4px); }
+      40% { transform: translate(4px, -4px); }
+      60% { transform: translate(-4px, -2px); }
+      80% { transform: translate(4px, 2px); }
+      100% { transform: translate(0, 0); }
+    }
+    .arena-shake {
+      animation: shakeScreen 0.25s ease-in-out;
     }
   </style>
 </head>
@@ -71,22 +89,32 @@
   <!-- Arena Permainan -->
   <main id="gameArena" class="w-full max-w-xl flex-1 min-h-[250px] max-h-[50dvh] bg-gradient-to-b from-slate-900 via-indigo-950/70 to-slate-900 rounded-2xl sm:rounded-3xl border border-slate-800 relative overflow-hidden shadow-inner cursor-crosshair-custom touch-none">
     
-    <!-- Sasaran Gagak -->
-    <button id="crowBtn" class="absolute hidden text-4xl sm:text-5xl transition-all duration-75 active:scale-75 focus:outline-none crow-flying select-none" aria-label="Gagak">
+    <!-- Sasaran Gagak (+10 Mata) -->
+    <button id="crowBtn" class="absolute hidden text-4xl sm:text-5xl transition-all duration-75 active:scale-75 focus:outline-none crow-flying select-none z-10" aria-label="Gagak">
       🐦‍⬛
     </button>
 
+    <!-- Sasaran Perangkap Bom (-10 Mata) -->
+    <button id="bombBtn" class="absolute hidden text-3xl sm:text-4xl transition-all duration-75 active:scale-75 focus:outline-none bomb-anim select-none z-10" aria-label="Bom">
+      💣
+    </button>
+
     <!-- Amaran Pecutan 10 Saat Terakhir -->
-    <div id="frenzyBadge" class="absolute top-2 left-1/2 -translate-x-1/2 bg-rose-600/90 border border-rose-400 text-white font-black text-[10px] sm:text-xs px-3 py-0.5 rounded-full uppercase tracking-wider hidden animate-pulse shadow-lg z-10 whitespace-nowrap">
+    <div id="frenzyBadge" class="absolute top-2 left-1/2 -translate-x-1/2 bg-rose-600/90 border border-rose-400 text-white font-black text-[10px] sm:text-xs px-3 py-0.5 rounded-full uppercase tracking-wider hidden animate-pulse shadow-lg z-20 whitespace-nowrap">
       ⚠️ KECEMASAN: 10S TERAKHIR!
     </div>
 
     <!-- Skrin Mula -->
     <div id="startScreen" class="absolute inset-0 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 sm:p-6 text-center z-20">
-      <div class="text-5xl sm:text-6xl mb-2 animate-bounce">🐦‍⬛</div>
+      <div class="flex items-center gap-2 text-5xl sm:text-6xl mb-2 animate-bounce">
+        <span>🐦‍⬛</span>
+        <span class="text-3xl">⚠️</span>
+        <span>💣</span>
+      </div>
       <h2 class="text-lg sm:text-2xl font-black text-white mb-2">Ops Kawalan Gagak!</h2>
       <p class="text-xs sm:text-sm text-slate-300 max-w-xs mb-5 leading-relaxed">
-        Sentuh atau klik gagak sepantas mungkin. Markah disimpan automatik ke Google Sheet!
+        Tembak gagak <strong class="text-emerald-400">(+10)</strong>.<br>
+        <strong class="text-rose-400">AWAS BOM!</strong> Terklik bom akan <strong class="text-rose-400">tolak -10 mata</strong>!
       </p>
       <button id="startGameBtn" class="bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-black py-2.5 px-7 sm:py-3 sm:px-8 rounded-xl shadow-lg transform active:scale-95 transition text-sm sm:text-base">
         MULA OPS (30s)
@@ -144,10 +172,12 @@
   </footer>
 
   <script>
-    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwPtVrKnBwS1gQ1NRo18Ok4Eh6_Mejstgz_ujX8nVZCio4Rd-totXe2ajCVT3r5rJpf/exec";
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzm3Tp4c_alZsM52T8FnNBR2ApUjJQD6NgiJEyUvGiEfllYdXDXCMwJBA9PPRMmxeuMVQ/exec";
+
     const CONFIG = {
       TOTAL_TIME: 30,
-      POINTS_PER_HIT: 10,
+      POINTS_HIT: 10,
+      POINTS_BOMB_PENALTY: 10,
       NORMAL_SPEED_MS: 800,
       FRENZY_SPEED_MS: 400
     };
@@ -160,6 +190,7 @@
     let currentSpeed = CONFIG.NORMAL_SPEED_MS;
 
     const crowBtn = document.getElementById('crowBtn');
+    const bombBtn = document.getElementById('bombBtn');
     const arena = document.getElementById('gameArena');
     const frenzyBadge = document.getElementById('frenzyBadge');
     const timerText = document.getElementById('timerText');
@@ -187,6 +218,7 @@
       }
     }
 
+    // Bunyi tembakan kena gagak (high pitch)
     function playShotTone() {
       try {
         initAudio();
@@ -204,20 +236,34 @@
       } catch (e) {}
     }
 
-    async function fetchTop10Leaderboard() {
+    // Bunyi letupan bom terkena (low frequency bass boom)
+    function playBombExplosionTone() {
+      try {
+        initAudio();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(160, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.35);
+        gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      } catch (e) {}
+    }
+
+    // Mengambil data Top 10 dari Google Sheet via JSONP
+    function fetchTop10Leaderboard() {
       leaderboardList.innerHTML = '<li class="text-center text-slate-500 italic py-2">Mengambil senarai 10 terbaik...</li>';
 
-      try {
-        const response = await fetch(GOOGLE_SCRIPT_URL, {
-          method: 'GET',
-          redirect: 'follow'
-        });
-
-        if (!response.ok) {
-          throw new Error('Respons rangkaian gagal');
-        }
-
-        const data = await response.json();
+      const scriptTag = document.createElement('script');
+      const callbackName = 'renderTop10Callback_' + Date.now();
+      
+      window[callbackName] = function(data) {
+        delete window[callbackName];
+        scriptTag.remove();
 
         if (!data || !data.length) {
           leaderboardList.innerHTML = '<li class="text-center text-slate-500 italic py-2">Belum ada pemain dalam Google Sheet.</li>';
@@ -244,11 +290,13 @@
             </div>
           </li>
         `).join('');
+      };
 
-      } catch (err) {
-        console.error("Ralat Leaderboard:", err);
+      scriptTag.src = `${GOOGLE_SCRIPT_URL}?callback=${callbackName}`;
+      scriptTag.onerror = function() {
         leaderboardList.innerHTML = '<li class="text-center text-rose-400 py-2">Gagal berhubung dengan Google Sheet.</li>';
-      }
+      };
+      document.body.appendChild(scriptTag);
     }
 
     async function submitScoreToSheet() {
@@ -264,7 +312,7 @@
         await fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
           mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: JSON.stringify({ name: name, score: score })
         });
 
@@ -281,7 +329,6 @@
         }, 1100);
 
       } catch (err) {
-        console.error("Ralat Simpan:", err);
         saveStatusMsg.textContent = "Ralat semasa menyimpan ke Sheet.";
         saveStatusMsg.className = "text-[10px] text-rose-400 font-semibold";
         saveScoreBtn.disabled = false;
@@ -295,7 +342,8 @@
       }[m]));
     }
 
-    function moveCrow() {
+    // Posisi rawak untuk gagak dan bom tanpa bertindih rapat
+    function repositionTargets() {
       if (!isPlaying) return;
       const arenaW = arena.clientWidth;
       const arenaH = arena.clientHeight;
@@ -304,46 +352,84 @@
       const maxX = arenaW - padding * 2;
       const maxY = arenaH - padding * 2;
 
-      const randomX = Math.floor(Math.random() * Math.max(maxX, 10)) + padding;
-      const randomY = Math.floor(Math.random() * Math.max(maxY, 10)) + padding;
+      // Posisi Gagak
+      const crowX = Math.floor(Math.random() * Math.max(maxX, 10)) + padding;
+      const crowY = Math.floor(Math.random() * Math.max(maxY, 10)) + padding;
+      crowBtn.style.left = `${crowX}px`;
+      crowBtn.style.top = `${crowY}px`;
 
-      crowBtn.style.left = `${randomX}px`;
-      crowBtn.style.top = `${randomY}px`;
+      // Posisi Bom (pastikan jarak minimum dari gagak)
+      let bombX, bombY, dist;
+      let attempts = 0;
+      do {
+        bombX = Math.floor(Math.random() * Math.max(maxX, 10)) + padding;
+        bombY = Math.floor(Math.random() * Math.max(maxY, 10)) + padding;
+        dist = Math.hypot(bombX - crowX, bombY - crowY);
+        attempts++;
+      } while (dist < 80 && attempts < 10);
+
+      bombBtn.style.left = `${bombX}px`;
+      bombBtn.style.top = `${bombY}px`;
     }
 
     function resetMoveTimer(speed) {
       clearInterval(moveTimer);
-      moveTimer = setInterval(moveCrow, speed);
+      moveTimer = setInterval(repositionTargets, speed);
     }
 
-    function spawnHitPopup(x, y) {
+    function spawnHitPopup(x, y, text, isPenalty) {
       const popup = document.createElement('span');
-      popup.className = 'hit-popup absolute font-black font-mono text-emerald-400 text-base sm:text-lg drop-shadow';
-      popup.textContent = `+${CONFIG.POINTS_PER_HIT}`;
+      popup.className = `hit-popup absolute font-black font-mono text-base sm:text-lg drop-shadow z-20 ${
+        isPenalty ? 'text-rose-500' : 'text-emerald-400'
+      }`;
+      popup.textContent = text;
       popup.style.left = `${x}px`;
       popup.style.top = `${y}px`;
       arena.appendChild(popup);
       setTimeout(() => popup.remove(), 500);
     }
 
-    function handleShot(e) {
+    // Terkena Gagak (+10)
+    function handleCrowShot(e) {
       if (!isPlaying) return;
       e.preventDefault();
       e.stopPropagation();
       playShotTone();
 
-      score += CONFIG.POINTS_PER_HIT;
+      score += CONFIG.POINTS_HIT;
       scoreText.textContent = score;
 
       const rect = arena.getBoundingClientRect();
       const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
       const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-      
-      const clickX = clientX - rect.left;
-      const clickY = clientY - rect.top;
-      spawnHitPopup(clickX, clickY);
+      spawnHitPopup(clientX - rect.left, clientY - rect.top, `+${CONFIG.POINTS_HIT}`, false);
 
-      moveCrow();
+      repositionTargets();
+      resetMoveTimer(currentSpeed);
+    }
+
+    // Tertekan Bom (-10)
+    function handleBombShot(e) {
+      if (!isPlaying) return;
+      e.preventDefault();
+      e.stopPropagation();
+      playBombExplosionTone();
+
+      // Tolak 10 markah, hadkan minimum kepada 0
+      score = Math.max(0, score - CONFIG.POINTS_BOMB_PENALTY);
+      scoreText.textContent = score;
+
+      // Kesan gegaran skrin arena
+      arena.classList.remove('arena-shake');
+      void arena.offsetWidth; // trigger reflow
+      arena.classList.add('arena-shake');
+
+      const rect = arena.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+      const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+      spawnHitPopup(clientX - rect.left, clientY - rect.top, `💥 -${CONFIG.POINTS_BOMB_PENALTY}`, true);
+
+      repositionTargets();
       resetMoveTimer(currentSpeed);
     }
 
@@ -364,8 +450,9 @@
       startScreen.classList.add('hidden');
       gameOverScreen.classList.add('hidden');
       crowBtn.classList.remove('hidden');
+      bombBtn.classList.remove('hidden');
 
-      moveCrow();
+      repositionTargets();
       resetMoveTimer(currentSpeed);
 
       gameTimer = setInterval(() => {
@@ -395,6 +482,7 @@
       frenzyBadge.classList.add('hidden');
       crowBtn.classList.remove('crow-fast');
       crowBtn.classList.add('hidden');
+      bombBtn.classList.add('hidden');
 
       finalScoreVal.textContent = score;
       gameOverScreen.classList.remove('hidden');
@@ -402,7 +490,8 @@
       setTimeout(() => playerNameInput.focus(), 200);
     }
 
-    crowBtn.addEventListener('pointerdown', handleShot);
+    crowBtn.addEventListener('pointerdown', handleCrowShot);
+    bombBtn.addEventListener('pointerdown', handleBombShot);
     startGameBtn.addEventListener('click', startGame);
     playAgainBtn.addEventListener('click', startGame);
     saveScoreBtn.addEventListener('click', submitScoreToSheet);
